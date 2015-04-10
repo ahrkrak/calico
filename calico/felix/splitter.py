@@ -43,6 +43,12 @@ class UpdateSplitter(object):
         """
         # Step 1: fire in data update events to the profile and tag managers
         # so they can build their indexes before we activate anything.
+        # MD4: This sounds dangerous - either the requirement is wrong, or
+        # we're depending on scheduler ordering for correctness (and probably
+        # won't even achieve eventual correctness!).
+        #
+        # I feel very uncomfortable about having actors that depend on ordering
+        # of operations across multiple queues at all.
         _log.info("Applying snapshot. STAGE 1a: rules.")
         for rules_mgr in self.rules_mgrs:
             rules_mgr.apply_snapshot(rules_by_prof_id, async=True)
@@ -66,6 +72,10 @@ class UpdateSplitter(object):
         # takes longer than this timer to apply then we might do the cleanup
         # before the snapshot is finished.  That would cause dropped packets
         # until applying the snapshot finishes.
+        # MD4: This is also scary - could we not use an alternate model where
+        # something (probably the ipset itself) knows which objects are
+        # needed and therefore trigger cleanup when the object is no longer
+        # referenced?
         gevent.spawn_later(self.config.STARTUP_CLEANUP_DELAY,
                            self.trigger_cleanup)
 
@@ -78,6 +88,12 @@ class UpdateSplitter(object):
         try:
             # Need to clean up iptables first because they reference ipsets
             # and force them to stay alive.
+            # MD4: Similar to above - I'm uncomfortable, even if async=False
+            # does what it sounds like because there's no reflection in the
+            # called code that it needs to obey this.  I also note that
+            # ipt_updater.cleanup() can spin the gevent scheduler - I don't
+            # know the design well enough to say if this is a problem, but it's
+            # worrying and not obvious.
             for ipt_updater in self.iptables_updaters:
                 ipt_updater.cleanup(async=False)
         except Exception:
